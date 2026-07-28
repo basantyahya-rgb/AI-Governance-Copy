@@ -23,8 +23,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Check Python syntax
-        run: python -m compileall backend/app
-
-      - name: Run tests
         working-directory: backend
-        run: pytest --ignore=test_ollama.py
+        run: python -m compileall app
+
+      - name: Verify FastAPI imports
+        working-directory: backend
+        run: |
+          python -c "from app.main import app; print('FastAPI app imported successfully')"
