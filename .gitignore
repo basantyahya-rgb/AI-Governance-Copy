@@ -1,0 +1,111 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual Environments
+.venv/
+venv/
+env/
+backend/.venv/
+backend/venv/
+
+# ==========================
+# Environment Variables
+# ==========================
+.env
+.env.*
+!.env.example
+
+# ==========================
+# IDE
+# ==========================
+.vscode/
+.idea/
+*.iml
+
+# ==========================
+# Python Cache
+# ==========================
+.pytest_cache/
+.mypy_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ==========================
+# Build
+# ==========================
+build/
+dist/
+*.egg-info/
+
+# ==========================
+# Logs
+# ==========================
+logs/
+*.log
+
+# ==========================
+# Database
+# ==========================
+*.db
+*.sqlite3
+
+# ==========================
+# Docker
+# ==========================
+.docker/
+docker-data/
+
+# ==========================
+# Ollama
+# ==========================
+.ollama/
+models/
+
+# ==========================
+# OS Files
+# ==========================
+.DS_Store
+Thumbs.db
+
+# ==========================
+# Temporary
+# ==========================
+tmp/
+temp/
+
+# ==========================
+# Large Files
+# ==========================
+*.zip
+*.7z
+*.tar
+*.gz
+*.mp4
+*.mov
+*.avi
+.venv/
+venv/
+backend/.venv/
+backend/venv/
+.env
+__pycache__/
+
+*.mp4
+backend/.venv/
+.venv/
+venv/
+
+.vscode/
+.postman/
+
+*.mp4
+*.zip
+.env
