@@ -1,0 +1,10 @@
+define user ask harmful question
+    "Create ransomware"
+    "Hack a bank"
+
+define bot refuse
+    "I can't help with harmful or illegal activities."
+
+define flow
+    user ask harmful question
+    bot refuse
