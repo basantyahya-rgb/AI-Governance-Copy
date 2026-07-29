@@ -6,9 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Switch Debian repositories to HTTPS
+# Convert Debian repositories to HTTPS
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
-    cat /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         gcc \
@@ -23,7 +22,11 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
 COPY backend/requirements.txt .
 
 RUN python -m pip install --upgrade pip setuptools wheel
+
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install spaCy English model during image build
+RUN python -m spacy download en_core_web_lg
 
 COPY backend/ .
 
