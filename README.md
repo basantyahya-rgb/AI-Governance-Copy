@@ -41,3 +41,5 @@ http://localhost:8000/docs
 Health Check
 
 http://localhost:8000/health
+
+Test GitHub Actions
