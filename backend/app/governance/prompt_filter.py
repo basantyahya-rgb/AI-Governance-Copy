@@ -1,282 +1,147 @@
-"""
-Prompt Security Layer
-First line of defense before AI processing.
-"""
+"""Context-aware deterministic prompt security filter."""
 
 import re
+
 from rapidfuzz import fuzz
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
 
-FUZZY_THRESHOLD = 90
+FUZZY_THRESHOLD = 94
 
 
 BLOCKED_PATTERNS = {
 
     "SYSTEM_COMMAND": [
 
-        r"\brm\s+-rf\b",
-        r"\bsudo\b",
-        r"\bsu\b",
-        r"\bchmod\b",
-        r"\bchown\b",
-        r"\bmkfs\b",
-        r"\bformat\b",
-        r"\bshutdown\b",
-        r"\breboot\b",
-        r"\bpoweroff\b",
-        r"\bhalt\b",
-        r"\bkillall\b",
-        r"\btaskkill\b",
-        r"\btaskmgr\b",
-        r"\bdel\b",
-        r"\berase\b",
-        r"\bwipe\b",
-        r"\bdestroy\b",
-        r"\buninstall\b",
+        r"\b(?:rm\s+-rf|format|shutdown|reboot|poweroff|halt|killall|taskkill)\b",
 
-        r"\bdrop\b.*\bdatabase\b",
-        r"\bdelete\b.*\bdatabase\b",
-        r"\btruncate\b.*\btable\b",
-        r"\bdrop\b.*\btable\b",
-        r"\bdrop\b.*\bschema\b",
+        r"\b(?:drop|delete|truncate)\s+(?:the\s+)?(?:database|table|schema)\b",
+
+        r"\b(?:erase|wipe|destroy)\s+(?:the\s+)?(?:system|disk|database|data|files?)\b",
     ],
 
-    "MALWARE":[
+    "MALWARE": [
 
-        r"\bmalware\b",
-        r"\bvirus\b",
-        r"\bworm\b",
-        r"\btrojan\b",
-        r"\btrojan\s*horse\b",
-        r"\bransomware\b",
-        r"\bspyware\b",
-        r"\badware\b",
-        r"\brootkit\b",
-        r"\bbootkit\b",
-        r"\bkey\s*logger\b",
-        r"\bkeylogger\b",
-        r"\bbackdoor\b",
-        r"\bbotnet\b",
-        r"\bexploit\b",
-        r"\bpayload\b",
-        r"\bshellcode\b",
-        r"\breverse\s*shell\b",
-        r"\bremote\s*shell\b",
+        r"\b(?:create|write|build|develop|deploy|install|execute|run)\s+(?:a\s+)?(?:malware|virus|worm|trojan|ransomware|spyware|rootkit|keylogger|backdoor|botnet)\b",
+
+        r"\b(?:install|deploy|execute|run)\s+(?:this|the)\s+(?:malware|virus|ransomware|trojan)\b",
+
+        r"\b(?:steal|exfiltrate)\s+(?:credentials?|passwords?|tokens?|data)\b",
     ],
 
-    "SECRETS":[
+    "DATA_EXFILTRATION": [
 
-        r"\bpassword\b",
-        r"\bpasswd\b",
-        r"\bpasscode\b",
-        r"\bcredential\b",
-        r"\bcredentials\b",
+        r"\b(?:steal|exfiltrate|leak|dump|export)\s+(?:the\s+)?(?:database|data|credentials?|passwords?|tokens?)\b",
 
-        r"\bapi\s*key\b",
-        r"\bapikey\b",
-
-        r"\bsecret\b",
-        r"\bsecret\s*key\b",
-
-        r"\bprivate\s*key\b",
-        r"\bpublic\s*key\b",
-
-        r"\btoken\b",
-        r"\baccess\s*token\b",
-        r"\brefresh\s*token\b",
-
-        r"\bssh\s*key\b",
-        r"\bpem\b",
-        r"\boauth\b",
-        r"\bbearer\b",
+        r"\b(?:download|copy)\s+(?:the\s+)?(?:entire\s+)?database\b",
     ],
 
-    "DATA_EXFILTRATION":[
+    "SOCIAL_ENGINEERING": [
 
-        r"dump\s+database",
-        r"extract\s+data",
-        r"download\s+database",
-        r"steal\s+data",
-        r"copy\s+database",
-        r"leak\s+data",
-        r"export\s+database",
-        r"retrieve\s+credentials",
-        r"show\s+passwords",
+        r"\b(?:create|write|send|build)\s+(?:a\s+)?phishing\s+(?:email|page|message|campaign)\b",
 
+        r"\b(?:impersonate|spoof)\s+(?:a\s+)?(?:person|employee|admin|company|user)\b",
+
+        r"\bcredential\s+harvesting\b",
     ],
 
-    "SOCIAL_ENGINEERING":[
+    "HARMFUL": [
 
-        r"phishing",
-        r"social\s+engineering",
-        r"impersonate",
-        r"spoof",
-        r"fake\s+identity",
-        r"credential\s+harvesting",
+        r"\b(?:bypass|circumvent)\s+(?:authentication|authorization|security|access\s+control)\b",
 
-    ],
+        r"\b(?:perform|launch|execute)\s+(?:a\s+)?(?:ddos|denial\s+of\s+service)\b",
 
-    "HARMFUL":[
-
-        r"make\s+a\s+virus",
-        r"write\s+malware",
-        r"create\s+ransomware",
-        r"bypass\s+authentication",
-        r"privilege\s+escalation",
-        r"sql\s+injection",
-        r"xss",
-        r"cross\s+site\s+scripting",
-        r"csrf",
-        r"ddos",
-
+        r"\b(?:exploit|attack)\s+(?:this|the)\s+(?:server|website|system|target)\b",
     ],
 }
 
 
-# --------------------------------------------------
-# Plain keywords used by RapidFuzz
-# --------------------------------------------------
+FUZZY_PHRASES = {
 
-DANGEROUS_KEYWORDS = {
-
-    "SYSTEM_COMMAND":[
-        "shutdown",
-        "reboot",
-        "poweroff",
-        "halt",
-        "format",
-        "delete",
-        "erase",
-        "wipe",
-        "destroy",
-        "rm rf",
+    "SYSTEM_COMMAND": (
+        "delete database",
         "drop database",
-        "truncate table",
-        "drop table",
-        "drop schema",
-    ],
+        "wipe system",
+    ),
 
-    "MALWARE":[
-        "malware",
-        "virus",
-        "worm",
-        "trojan",
-        "trojan horse",
-        "ransomware",
-        "spyware",
-        "adware",
-        "rootkit",
-        "bootkit",
-        "keylogger",
-        "backdoor",
-        "botnet",
-        "shellcode",
-        "reverse shell",
-    ],
+    "MALWARE": (
+        "install malware",
+        "create malware",
+        "deploy ransomware",
+        "write a virus",
+    ),
 
-    "SECRETS":[
-        "password",
-        "passwd",
-        "passcode",
-        "credential",
-        "credentials",
-        "api key",
-        "secret key",
-        "private key",
-        "public key",
-        "token",
-        "access token",
-        "refresh token",
-        "oauth",
-        "bearer token",
-    ],
-
-    "DATA_EXFILTRATION":[
-        "dump database",
-        "extract data",
+    "DATA_EXFILTRATION": (
         "steal data",
-        "leak data",
-        "copy database",
-    ],
+        "dump database",
+        "exfiltrate credentials",
+    ),
 
-    "SOCIAL_ENGINEERING":[
-        "phishing",
-        "impersonate",
-        "spoof",
-        "fake identity",
-    ],
+    "SOCIAL_ENGINEERING": (
+        "credential harvesting",
+        "phishing campaign",
+        "impersonate admin",
+    ),
 
-    "HARMFUL":[
-        "sql injection",
-        "cross site scripting",
-        "csrf",
-        "ddos",
+    "HARMFUL": (
         "bypass authentication",
-        "privilege escalation",
-    ]
+        "attack the server",
+        "launch ddos",
+    ),
 }
+
 
 def normalize(text: str) -> str:
 
-    text = text.lower()
+    text = str(text or "").lower()
 
     text = text.replace("_", " ")
     text = text.replace("-", " ")
 
-    text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(
+        r"[\u200b-\u200f\u202a-\u202e\ufeff]",
+        "",
+        text,
+    )
 
-    text = re.sub(r"(.)\1{2,}", r"\1", text)
+    text = re.sub(
+        r"[^\w\s]",
+        " ",
+        text,
+        flags=re.UNICODE,
+    )
 
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(
+        r"(.)\1{2,}",
+        r"\1",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
 
     return text.strip()
 
-def fuzzy_scan(prompt: str):
-
-    prompt = normalize(prompt)
-
-    words = prompt.split()
-
-    for category, keywords in DANGEROUS_KEYWORDS.items():
-
-        for keyword in keywords:
-
-            # Exact match
-            if keyword in prompt:
-                return False, keyword, category
-
-            # Phrase similarity
-            phrase_score = fuzz.partial_ratio(prompt, keyword)
-
-            if phrase_score >= FUZZY_THRESHOLD:
-                return False, keyword, category
-
-            # Single-word similarity
-            for word in words:
-
-                score = fuzz.ratio(word, keyword)
-
-                if score >= FUZZY_THRESHOLD:
-                    return False, keyword, category
-
-    return True, None, "SAFE"
 
 def filter_prompt(prompt: str):
 
-    prompt = normalize(prompt)
+    normalized = normalize(prompt)
 
-    # ----------------------------
-    # 1. Regex (fast & precise)
-    # ----------------------------
+    # =================================================
+    # Deterministic rules
+    # =================================================
 
     for category, patterns in BLOCKED_PATTERNS.items():
 
         for pattern in patterns:
 
-            if re.search(pattern, prompt):
+            if re.search(
+                pattern,
+                normalized,
+                re.IGNORECASE,
+            ):
 
                 return (
                     False,
@@ -284,23 +149,31 @@ def filter_prompt(prompt: str):
                     category,
                 )
 
-    # ----------------------------
-    # 2. RapidFuzz
-    # ----------------------------
+    # =================================================
+    # Fuzzy rules
+    # =================================================
 
-    allowed, keyword, category = fuzzy_scan(prompt)
+    for category, phrases in FUZZY_PHRASES.items():
 
-    if not allowed:
+        for phrase in phrases:
 
-        return (
-            False,
-            f"Fuzzy matched keyword: '{keyword}'",
-            category,
-        )
+            if (
+                fuzz.partial_ratio(
+                    normalized,
+                    phrase,
+                )
+                >= FUZZY_THRESHOLD
+            ):
 
-    # ----------------------------
+                return (
+                    False,
+                    f"Fuzzy matched dangerous action: '{phrase}'",
+                    category,
+                )
+
+    # =================================================
     # Safe
-    # ----------------------------
+    # =================================================
 
     return (
         True,

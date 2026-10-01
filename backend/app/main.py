@@ -1,220 +1,441 @@
+"""FastAPI entry point for the AI Governance Platform."""
 
-from datasets import load_dataset
-from datetime import datetime
 import time
 import uuid
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-
-# Governance Modules
-from app.governance.prompt_filter import filter_prompt
-from app.governance.injection_detector import detect_prompt_injection
-from app.governance.pii_detector import detect_pii
-from app.governance.risk_engine import calculate_risk
-from app.governance.decision_engine import make_decision
-from app.services.qwen_service import ask_qwen
-# NeMo Guardrails
-from app.services.nemo_service import check_prompt
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-load_dotenv()
 
-nemo_result = {
-    "available": False,
-    "flagged": False,
-    "response": None,
-    "error": None,
-    "message": None,
-}
-
-app = FastAPI(
-    title="AI Governance Platform",
-    description="Enterprise AI Governance Platform for Prompt Validation and Risk Assessment",
-    version="1.0.0",
+from fastapi import (
+    FastAPI,
+    HTTPException,
 )
 
-GOVERNANCE_VERSION = "1.0"
+from pydantic import (
+    BaseModel,
+    Field,
+)
+
+
+from app.governance.injection_detector import (
+    detect_prompt_injection,
+)
+
+from app.governance.pii_detector import (
+    detect_pii,
+)
+
+from app.governance.prompt_filter import (
+    filter_prompt,
+)
+
+from app.governance.risk_engine import (
+    calculate_risk,
+)
+
+from app.services.nemo_service import (
+    check_prompt,
+)
+
+from app.services.qwen_service import (
+    ask_qwen,
+)
+
+
+load_dotenv()
+
+
+GOVERNANCE_VERSION = "2.0"
+
+
+app = FastAPI(
+
+    title="AI Governance Platform",
+
+    description=(
+        "Enterprise AI Governance Platform "
+        "for Prompt Validation and Risk Assessment"
+    ),
+
+    version="2.0.0",
+)
 
 
 class PromptRequest(BaseModel):
+
     prompt: str = Field(
         ...,
         min_length=1,
         max_length=5000,
-        description="User prompt",
     )
 
 
 @app.get("/")
 def root():
+
     return {
-        "application": "AI Governance Platform",
-        "version": "1.0.0",
-        "status": "Running",
+
+        "application":
+            "AI Governance Platform",
+
+        "version":
+            "2.0.0",
+
+        "status":
+            "Running",
+
+        "decision_policy": [
+            "ALLOW",
+            "BLOCK",
+        ],
     }
 
 
 @app.get("/health")
 def health():
+
     return {
-        "status": "Healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+
+        "status":
+            "Healthy",
+
+        "timestamp":
+            datetime.now(
+                timezone.utc
+            ).isoformat(),
     }
 
 
 @app.post("/validate")
-def validate_prompt(request: PromptRequest):
+def validate_prompt(
+    request: PromptRequest
+):
 
-    start_time = time.perf_counter()
-    request_id = str(uuid.uuid4())
+    started = time.perf_counter()
+
+    request_id = str(
+        uuid.uuid4()
+    )
 
     try:
 
         prompt = request.prompt
 
-        # Step 1
-        allowed, filter_reason, filter_category = filter_prompt(prompt)
+        # =================================================
+        # 1. Prompt Security Filter
+        # =================================================
 
-        # Step 2
-        injection = detect_prompt_injection(prompt)
+        (
+            allowed,
+            filter_reason,
+            filter_category,
+        ) = filter_prompt(
+            prompt
+        )
 
-        injection_detected = injection["detected"]
+        # =================================================
+        # 2. Prompt Injection
+        # =================================================
 
-        # Step 3
-        pii_findings = detect_pii(prompt)
+        injection = (
+            detect_prompt_injection(
+                prompt
+            )
+        )
 
-        # Step 4
-        # Step 4 - NeMo Guardrails
+        # =================================================
+        # 3. PII / Secrets
+        # =================================================
+
+        pii_findings = detect_pii(
+            prompt
+        )
+
+        # =================================================
+        # 4. NeMo Secondary Layer
+        # =================================================
 
         nemo_result = {
+
             "available": False,
+
             "flagged": False,
+
             "response": None,
+
             "error": None,
+
             "message": None,
         }
 
-        # Only skip if the prompt was already blocked by the Prompt Filter
-        if not allowed:
+        # Don't waste local compute if the prompt
+        # is already deterministically blocked.
+
+        if (
+            not allowed
+            or injection.get("detected")
+        ):
 
             nemo_result["message"] = (
-                "Skipped because Prompt Filter blocked the prompt."
+                "Skipped because a "
+                "deterministic security control "
+                "already blocked the prompt."
             )
 
         else:
 
             try:
-                nemo_output = check_prompt(prompt)
 
                 nemo_result = {
+
                     "available": True,
-                    "flagged": nemo_output.get("flagged", False),
-                    "response": nemo_output,
+
+                    **check_prompt(
+                        prompt
+                    ),
+
                     "error": None,
-                    "message": "Executed successfully",
+
+                    "message":
+                        "Executed successfully",
                 }
 
-            except Exception as e:
+            except Exception as exc:
 
                 nemo_result = {
-                    "available": False,
-                    "flagged": False,
-                    "response": None,
-                    "error": str(e),
-                    "message": "NeMo execution failed",
-                }
-                        
-                        
-    # Step 5
 
-                
+                    "available": False,
+
+                    "flagged": False,
+
+                    "response": None,
+
+                    "error": str(exc),
+
+                    "message": (
+                        "NeMo execution failed; "
+                        "deterministic controls "
+                        "remain authoritative."
+                    ),
+                }
+
+        # =================================================
+        # 5. Unified Risk Engine
+        # =================================================
+
         risk = calculate_risk(
 
-        prompt_filter={
-            "allowed": allowed,
-            "category": filter_category,
-            "reason": filter_reason,
-        },
+            prompt_filter={
 
-        injection=injection,
+                "allowed":
+                    allowed,
 
-        pii_findings=pii_findings,
+                "category":
+                    filter_category,
 
-        nemo=nemo_result,
+                "reason":
+                    filter_reason,
+            },
 
-    )
-        
-        risk_score = risk["score"]
-        risk_level = risk["level"]
-        reasons = risk["reasons"]
+            injection=
+                injection,
 
-        # Step 6
-        decision = make_decision(risk["score"])
-        processing_time = round(
-    (time.perf_counter() - start_time) * 1000,
-    2,
-)
+            pii_findings=
+                pii_findings,
 
-        if (decision == "ALLOW" and allowed and not injection_detected and len(pii_findings) == 0 and not nemo_result["flagged"]):
+            nemo=
+                nemo_result,
+        )
+
+        # =================================================
+        # 6. FINAL DECISION
+        # =================================================
+
+        decision = risk["action"]
+
+        # Absolute API guarantee:
+        # only ALLOW / BLOCK can leave this endpoint.
+
+        if decision not in {
+            "ALLOW",
+            "BLOCK",
+        }:
+
+            decision = "BLOCK"
+
+        # =================================================
+        # 7. Qwen
+        # =================================================
+
+        llm_response = None
+
+        output_findings = []
+
+        if decision == "ALLOW":
+
             try:
-                llm_response = ask_qwen(prompt)
-            except Exception as e:
-                llm_response = f"Qwen Error: {e}"
-        else:
-            llm_response = None
 
-        
+                llm_response = ask_qwen(
+                    prompt
+                )
+
+                # =================================================
+                # Output Security Guard
+                # =================================================
+
+                output_findings = detect_pii(
+                    llm_response or ""
+                )
+
+                if output_findings:
+
+                    llm_response = (
+                        "Response blocked by "
+                        "output security policy."
+                    )
+
+                    decision = "BLOCK"
+
+                    risk["reasons"].append(
+                        "Output security guard "
+                        "detected sensitive content."
+                    )
+
+            except Exception as exc:
+
+                llm_response = None
+
+                risk["reasons"].append(
+                    f"LLM unavailable: {exc}"
+                )
+
+        # =================================================
+        # 8. Processing Time
+        # =================================================
+
+        processing_time = round(
+
+            (
+                time.perf_counter()
+                - started
+            )
+            * 1000,
+
+            2,
+        )
+
+        # =================================================
+        # 9. Response
+        # =================================================
 
         return {
-            "request_id": request_id,
-            "timestamp": datetime.utcnow().isoformat(),
-            "governance_version": GOVERNANCE_VERSION,
-            "decision": decision,
+
+            "request_id":
+                request_id,
+
+            "timestamp":
+                datetime.now(
+                    timezone.utc
+                ).isoformat(),
+
+            "governance_version":
+                GOVERNANCE_VERSION,
+
+            "decision":
+                decision,
+
             "risk": {
-                "score": risk_score,
-                "level": risk_level,
-                "reasons": reasons,
-                "breakdown": risk["breakdown"]
+
+                "score":
+                    risk["score"],
+
+                "level":
+                    risk["level"],
+
+                "reasons":
+                    risk["reasons"],
+
+                "breakdown":
+                    risk["breakdown"],
             },
+
             "governance": {
-              "prompt_filter": {
-                "allowed": allowed,
-                "reason": filter_reason,
-                "category": filter_category
-                     },
-                "prompt_injection": injection,
-                "pii_detection": {
-                    "count": len(pii_findings),
-                    "findings": pii_findings,
+
+                "prompt_filter": {
+
+                    "allowed":
+                        allowed,
+
+                    "reason":
+                        filter_reason,
+
+                    "category":
+                        filter_category,
                 },
-                "nemo_guardrails": nemo_result,
-            
+
+                "prompt_injection":
+                    injection,
+
+                "pii_detection": {
+
+                    "count":
+                        len(pii_findings),
+
+                    "findings":
+                        pii_findings,
+                },
+
+                "nemo_guardrails":
+                    nemo_result,
+
+                "output_guard": {
+
+                    "blocked":
+                        bool(output_findings),
+
+                    "findings_count":
+                        len(output_findings),
+                },
             },
+
             "audit": {
-                "engine": "AI Governance Platform",
-                "version": "1.0.0",
-                "processing_time_ms": processing_time,
+
+                "engine":
+                    "AI Governance Platform",
+
+                "version":
+                    "2.0.0",
+
+                "processing_time_ms":
+                    processing_time,
             },
 
             "llm": {
 
-    "model": "qwen3:8b",
+                "model":
+                    "qwen3:8b",
 
-    "response": llm_response
-
-},
+                "response":
+                    llm_response,
+            },
         }
 
-    except Exception as e:
+    except Exception as exc:
+
         raise HTTPException(
+
             status_code=500,
+
             detail={
-                "request_id": request_id,
-                "message": "Validation Error",
-                "error": str(e),
+
+                "request_id":
+                    request_id,
+
+                "message":
+                    "Validation Error",
+
+                "error":
+                    str(exc),
             },
-        )
 
-
-
+        ) from exc

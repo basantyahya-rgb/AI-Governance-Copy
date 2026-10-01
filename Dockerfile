@@ -30,6 +30,8 @@ RUN python -m spacy download en_core_web_lg
 
 COPY backend/ .
 
+RUN sed -i 's/\r$//' start.sh
+
 RUN chmod +x start.sh
 
 EXPOSE 8000

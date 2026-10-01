@@ -22,6 +22,16 @@ backend/venv/
 !.env.example
 
 # ==========================
+# Node.js
+# ==========================
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================
 # IDE
 # ==========================
 .vscode/
@@ -29,7 +39,7 @@ backend/venv/
 *.iml
 
 # ==========================
-# Python Cache
+# Python Cache / Testing
 # ==========================
 .pytest_cache/
 .mypy_cache/
@@ -44,6 +54,7 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+frontend/dist/
 
 # ==========================
 # Logs
@@ -82,6 +93,11 @@ tmp/
 temp/
 
 # ==========================
+# Postman
+# ==========================
+.postman/
+
+# ==========================
 # Large Files
 # ==========================
 *.zip
@@ -91,21 +107,3 @@ temp/
 *.mp4
 *.mov
 *.avi
-.venv/
-venv/
-backend/.venv/
-backend/venv/
-.env
-__pycache__/
-
-*.mp4
-backend/.venv/
-.venv/
-venv/
-
-.vscode/
-.postman/
-
-*.mp4
-*.zip
-.env

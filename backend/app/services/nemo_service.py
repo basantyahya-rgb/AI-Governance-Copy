@@ -1,20 +1,70 @@
-from nemoguardrails import LLMRails
-from nemoguardrails import RailsConfig
+"""Optional NeMo Guardrails integration.
 
-config = RailsConfig.from_path("config/guardrails")
+NeMo is a secondary security signal.
+Deterministic governance remains authoritative.
+"""
 
-rails = LLMRails(config)
+import os
+from functools import lru_cache
+
+from nemoguardrails import (
+    LLMRails,
+    RailsConfig,
+)
 
 
-def check_prompt(prompt: str):
+CONFIG_PATH = os.getenv(
+    "NEMO_CONFIG_PATH",
+    "config/guardrails",
+)
 
-    response = rails.generate(
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+
+@lru_cache(maxsize=1)
+def _get_rails():
+
+    config = RailsConfig.from_path(
+        CONFIG_PATH
     )
 
-    return response
+    return LLMRails(config)
+
+
+def check_prompt(prompt: str) -> dict:
+
+    rails = _get_rails()
+
+    # Preferred API.
+
+    if hasattr(
+        rails,
+        "check",
+    ):
+
+        result = rails.check(
+
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ]
+        )
+
+        return {
+
+            "flagged": bool(result),
+
+            "result": result,
+        }
+
+    return {
+
+        "flagged": False,
+
+        "result": None,
+
+        "message": (
+            "NeMo check() is unavailable "
+            "in this installation."
+        ),
+    }

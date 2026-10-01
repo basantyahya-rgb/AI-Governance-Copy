@@ -1,10 +1,26 @@
+"""Compatibility wrapper for the binary governance policy."""
 
-def make_decision(score):
 
-    if score >= 70:
+BLOCK_THRESHOLD = 30
+
+
+def make_decision(score) -> str:
+
+    try:
+
+        numeric_score = float(score)
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        # Fail closed.
+
         return "BLOCK"
 
-    elif score >= 30:
-        return "REVIEW"
-
-    return "ALLOW"
+    return (
+        "BLOCK"
+        if numeric_score >= BLOCK_THRESHOLD
+        else "ALLOW"
+    )

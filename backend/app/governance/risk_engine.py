@@ -1,117 +1,93 @@
-"""
-Risk Assessment Layer
-
-Aggregates all governance modules into a deterministic
-enterprise risk score.
-"""
+"""Single-source risk engine with binary ALLOW/BLOCK enforcement."""
 
 from typing import Dict, List
 
 
-# =====================================================
-# Prompt Filter Weights
-# =====================================================
-
 PROMPT_FILTER_WEIGHTS = {
 
-    "SYSTEM_COMMAND": 45,
+    "SYSTEM_COMMAND": 60,
 
-    "MALWARE": 45,
+    "MALWARE": 70,
 
-    "DATA_EXFILTRATION": 40,
+    "DATA_EXFILTRATION": 65,
 
-    "SOCIAL_ENGINEERING": 35,
+    "SOCIAL_ENGINEERING": 55,
 
-    "SECRETS": 30,
+    "SECRETS": 45,
 
-    "HARMFUL": 40,
+    "HARMFUL": 65,
 
     "SAFE": 0,
 }
 
 
-# =====================================================
-# Injection
-# =====================================================
+MAX_INJECTION_WEIGHT = 100
 
-MAX_INJECTION_WEIGHT = 40
-
-
-# =====================================================
-# PII
-# =====================================================
 
 PII_SEVERITY = {
 
-    "Critical": 20,
+    "Critical": 45,
 
-    "High": 15,
+    "High": 35,
 
-    "Medium": 8,
+    "Medium": 20,
 
-    "Low": 3,
+    "Low": 10,
 }
 
-MAX_PII_SCORE = 40
+
+MAX_PII_SCORE = 60
 
 
-# =====================================================
-# NeMo
-# =====================================================
+NEMO_WEIGHT = 25
 
-NEMO_WEIGHT = 20
-
-
-# =====================================================
-# Total
-# =====================================================
 
 MAX_SCORE = 100
 
 
-# =====================================================
-# Thresholds
-# =====================================================
+BLOCK_THRESHOLD = 30
 
-LOW = 25
-
-MEDIUM = 50
-
-HIGH = 75
-
-
-# =====================================================
-# Risk Calculation
-# =====================================================
 
 def calculate_risk(
-
     prompt_filter: Dict,
-
     injection: Dict,
-
     pii_findings: List,
-
     nemo: Dict,
-
 ) -> Dict:
 
     score = 0
 
     reasons = []
 
-    breakdown = {}
+    breakdown = {
 
+        "prompt_filter": 0,
+
+        "prompt_injection": 0,
+
+        "pii": 0,
+
+        "nemo": 0,
+    }
 
     # =================================================
     # Prompt Filter
     # =================================================
 
-    category = prompt_filter.get("category", "SAFE")
+    category = prompt_filter.get(
+        "category",
+        "SAFE",
+    )
 
-    if not prompt_filter.get("allowed", True):
+    if not prompt_filter.get(
+        "allowed",
+        True,
+    ):
 
-        weight = PROMPT_FILTER_WEIGHTS.get(category, 30)
+        weight = PROMPT_FILTER_WEIGHTS.get(
+            category,
+            50,
+        )
 
         score += weight
 
@@ -121,63 +97,54 @@ def calculate_risk(
             f"Prompt Filter blocked prompt ({category})."
         )
 
-    else:
-
-        breakdown["prompt_filter"] = 0
-
-
     # =================================================
     # Prompt Injection
     # =================================================
 
     if injection.get("detected"):
 
-        confidence = injection.get("confidence", 100)
+        score += MAX_INJECTION_WEIGHT
 
-        if confidence >= 95:
-
-            inj_score = 40
-
-        elif confidence >= 90:
-
-            inj_score = 35
-
-        elif confidence >= 80:
-
-            inj_score = 30
-
-        else:
-
-            inj_score = 20
-
-        score += inj_score
-
-        breakdown["prompt_injection"] = inj_score
-
-        reasons.append(
-
-            f"Prompt Injection detected ({confidence:.1f}% confidence)."
-
+        breakdown["prompt_injection"] = (
+            MAX_INJECTION_WEIGHT
         )
 
-    else:
+        confidence = float(
+            injection.get(
+                "confidence",
+                injection.get(
+                    "score",
+                    100,
+                ),
+            )
+            or 100
+        )
 
-        breakdown["prompt_injection"] = 0
-
+        reasons.append(
+            f"Prompt Injection detected "
+            f"({confidence:.1f}% confidence)."
+        )
 
     # =================================================
-    # PII
+    # PII / Secrets
     # =================================================
 
     pii_score = 0
 
     for finding in pii_findings:
 
-        severity = finding.get("severity", "Medium")
+        pii_score += PII_SEVERITY.get(
+            finding.get(
+                "severity",
+                "Medium",
+            ),
+            20,
+        )
 
-        pii_score += PII_SEVERITY.get(severity, 8)
-
-    pii_score = min(pii_score, MAX_PII_SCORE)
+    pii_score = min(
+        pii_score,
+        MAX_PII_SCORE,
+    )
 
     score += pii_score
 
@@ -186,80 +153,65 @@ def calculate_risk(
     if pii_findings:
 
         reasons.append(
-
-            f"{len(pii_findings)} sensitive item(s) detected."
-
+            f"{len(pii_findings)} sensitive "
+            f"item(s) detected."
         )
-
 
     # =================================================
     # NeMo
     # =================================================
 
-    if nemo.get("available"):
+    if (
+        nemo.get("available")
+        and nemo.get("flagged")
+    ):
 
-        if nemo.get("flagged"):
+        score += NEMO_WEIGHT
 
-            score += NEMO_WEIGHT
-
-            breakdown["nemo"] = NEMO_WEIGHT
-
-            reasons.append(
-
-                "NeMo Guardrails flagged unsafe content."
-
-            )
-
-        else:
-
-            breakdown["nemo"] = 0
-
-    else:
-
-        breakdown["nemo"] = 0
+        breakdown["nemo"] = NEMO_WEIGHT
 
         reasons.append(
-
-            "NeMo Guardrails unavailable."
-
+            "NeMo Guardrails flagged unsafe content."
         )
-
 
     # =================================================
     # Normalize
     # =================================================
 
-    score = min(score, MAX_SCORE)
-
+    score = min(
+        max(score, 0),
+        MAX_SCORE,
+    )
 
     # =================================================
-    # Risk Level
+    # Informational Risk Level
     # =================================================
 
-    if score >= HIGH:
+    if score >= 75:
 
         level = "Critical"
 
-        action = "BLOCK"
-
-    elif score >= MEDIUM:
+    elif score >= 50:
 
         level = "High"
 
-        action = "BLOCK"
-
-    elif score >= LOW:
+    elif score >= BLOCK_THRESHOLD:
 
         level = "Medium"
-
-        action = "REVIEW"
 
     else:
 
         level = "Low"
 
-        action = "ALLOW"
+    # =================================================
+    # Binary Decision
+    # =================================================
 
+    action = (
+        "BLOCK"
+        if score >= BLOCK_THRESHOLD
+        else "ALLOW"
+    )
 
     return {
 
@@ -272,5 +224,4 @@ def calculate_risk(
         "reasons": reasons,
 
         "breakdown": breakdown,
-
     }

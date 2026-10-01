@@ -1,166 +1,181 @@
-import os
+"""Prompt-injection detection.
+
+Deterministic first, fuzzy second. Explicit instruction-hijacking
+phrases are blocked immediately, while fuzzy matching is gated
+to reduce false positives.
+"""
+
+import csv
 import re
-import pandas as pd
+from functools import lru_cache
 from pathlib import Path
+
 from rapidfuzz import fuzz
 
 
-FUZZY_THRESHOLD = 90
+FUZZY_THRESHOLD = 92
 
-PROMPT_INJECTION_PATTERNS = [
 
-    r"ignore\s+(all\s+)?previous\s+instructions",
+INJECTION_PATTERNS = [
+    r"\bignore\s+(?:all\s+)?(?:the\s+)?(?:previous|prior|earlier)\s+instructions?\b",
+    r"\bforget\s+(?:all\s+)?(?:the\s+)?(?:previous|prior|earlier)\s+instructions?\b",
+    r"\bdisregard\s+(?:all\s+)?(?:the\s+)?(?:previous|prior|earlier)\s+instructions?\b",
 
-    r"ignore\s+(all\s+)?prior\s+instructions",
+    r"\boverride\s+(?:the\s+)?(?:system|developer|safety|security)\s+(?:instructions?|rules?|policy)\b",
 
-    r"forget\s+(all\s+)?previous\s+instructions",
+    r"\breveal\s+(?:the\s+)?(?:hidden\s+)?(?:system|developer)\s+prompt\b",
 
-    r"forget\s+everything",
+    r"\b(?:show|print|display|output|expose)\s+(?:the\s+)?(?:hidden\s+)?(?:system|developer)\s+(?:prompt|instructions?)\b",
 
-    r"system\s+prompt",
+    r"\b(?:reveal|show|expose|print|output)\s+(?:your|the)\s+(?:hidden\s+)?instructions?\b",
 
-    r"reveal\s+system\s+prompt",
+    r"\b(?:ignore|disregard|bypass|disable)\s+(?:the\s+)?(?:safety|security|guardrails?|policy|rules?)\b",
 
-    r"show\s+system\s+prompt",
+    r"\b(?:developer|admin|administrator|system)\s+mode\b",
 
-    r"developer\s+mode",
+    r"\b(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be)\b.*\b(?:unrestricted|unfiltered|jailbroken|dan)\b",
 
-    r"developer\s+message",
+    r"\bdo\s+anything\s+now\b",
 
-    r"hidden\s+instructions",
+    r"\b(?:dan|jailbreak|jailbroken)\b",
 
-    r"internal\s+prompt",
-
-    r"override\s+instructions",
-
-    r"bypass\s+safety",
-
-    r"disable\s+safety",
-
-    r"ignore\s+safety",
-
-    r"disable\s+guardrails",
-
-    r"ignore\s+guardrails",
-
-    r"act\s+as",
-
-    r"pretend\s+to\s+be",
-
-    r"you\s+are\s+now",
-
-    r"do\s+anything\s+now",
-
-    r"\bdan\b",
-
-    r"prompt\s+injection",
+    r"\bprompt\s+injection\b.*\b(?:ignore|override|bypass)\b",
 ]
 
-def normalize(text: str):
 
-    text = text.lower()
-
-    text = text.replace("_", " ")
-
-    text = text.replace("-", " ")
-
-    text = re.sub(r"[^\w\s]", " ", text)
-
-    text = re.sub(r"\s+", " ", text)
-
-    return text.strip()
-
-CSV_PATH = Path(__file__).parent / "prompt_injections_benchmark.csv"
-df = pd.read_csv(CSV_PATH)
-df["label"] = df["label"].fillna("").astype(str)
-df["text"] = df["text"].fillna("").astype(str)
-
-JAILBREAK_PROMPTS = (
-    df[df["label"].str.lower() == "jailbreak"]["text"]
-    .tolist()
+INJECTION_ACTION_CUES = (
+    "ignore",
+    "disregard",
+    "forget",
+    "override",
+    "bypass",
+    "disable",
+    "reveal",
+    "show",
+    "expose",
+    "system prompt",
+    "developer message",
+    "hidden instructions",
+    "guardrails",
+    "jailbreak",
+    "dan",
+    "unrestricted",
 )
 
-def normalize(text: str):
 
-    text = text.lower()
+CSV_PATH = Path(__file__).parent / "prompt_injections_benchmark.csv"
+
+
+def normalize(text: str) -> str:
+
+    text = str(text or "").lower()
 
     text = text.replace("_", " ")
     text = text.replace("-", " ")
 
-    text = re.sub(r"[^\w\s]", " ", text)
+    # Remove zero-width / bidi characters.
+    text = re.sub(
+        r"[\u200b-\u200f\u202a-\u202e\ufeff]",
+        "",
+        text,
+    )
 
-    text = re.sub(r"(.)\1{2,}", r"\1", text)
+    text = re.sub(
+        r"[^\w\s]",
+        " ",
+        text,
+        flags=re.UNICODE,
+    )
 
-    text = re.sub(r"\s+", " ", text)
+    # Normalize repeated characters.
+    text = re.sub(
+        r"(.)\1{2,}",
+        r"\1",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
 
     return text.strip()
 
-JAILBREAK_PROMPTS = [
-    normalize(x)
-    for x in JAILBREAK_PROMPTS
-]
 
-PROMPT_INJECTION_PATTERNS = [
+@lru_cache(maxsize=1)
+def _load_jailbreak_prompts() -> tuple[str, ...]:
 
-    r"ignore\s+(all\s+)?previous\s+instructions",
+    if not CSV_PATH.exists():
+        return ()
 
-    r"forget\s+(all\s+)?previous\s+instructions",
+    prompts = []
 
-    r"forget\s+everything",
+    try:
 
-    r"system\s+prompt",
+        with CSV_PATH.open(
+            "r",
+            encoding="utf-8",
+            newline="",
+        ) as handle:
 
-    r"reveal\s+system\s+prompt",
+            reader = csv.DictReader(handle)
 
-    r"show\s+system\s+prompt",
+            for row in reader:
 
-    r"developer\s+mode",
+                if (
+                    str(row.get("label", ""))
+                    .strip()
+                    .lower()
+                    == "jailbreak"
+                ):
 
-    r"developer\s+message",
+                    value = normalize(
+                        row.get("text", "")
+                    )
 
-    r"hidden\s+instructions",
+                    if value:
+                        prompts.append(value)
 
-    r"internal\s+prompt",
+    except (
+        OSError,
+        csv.Error,
+    ):
 
-    r"override",
+        return ()
 
-    r"bypass",
+    return tuple(prompts)
 
-    r"disable\s+safety",
 
-    r"ignore\s+safety",
+def _fuzzy_detection(prompt: str):
 
-    r"disable\s+guardrails",
+    # Do not run expensive fuzzy comparison against
+    # the whole benchmark for normal prompts.
 
-    r"ignore\s+guardrails",
+    if not any(
+        cue in prompt
+        for cue in INJECTION_ACTION_CUES
+    ):
 
-    r"pretend\s+to\s+be",
+        return (
+            False,
+            None,
+            0.0,
+        )
 
-    r"act\s+as",
-
-    r"you\s+are\s+now",
-
-    r"do\s+anything\s+now",
-
-    r"\bdan\b",
-
-]
-
-def fuzzy_detection(prompt):
-
-    prompt = normalize(prompt)
-
-    best_score = 0
+    best_score = 0.0
     best_match = None
 
-    for jailbreak in JAILBREAK_PROMPTS:
+    for jailbreak in _load_jailbreak_prompts():
 
-        jailbreak = normalize(jailbreak)
-
-        score = fuzz.partial_ratio(prompt, jailbreak)
+        score = fuzz.partial_ratio(
+            prompt,
+            jailbreak,
+        )
 
         if score > best_score:
-            best_score = score
+
+            best_score = float(score)
             best_match = jailbreak
 
     if best_score >= FUZZY_THRESHOLD:
@@ -178,25 +193,37 @@ def fuzzy_detection(prompt):
     )
 
 
+def detect_prompt_injection(prompt: str) -> dict:
 
-def detect_prompt_injection(prompt):
+    normalized = normalize(prompt)
 
-    prompt = normalize(prompt)
+    # =================================================
+    # Layer 1: Deterministic regex
+    # =================================================
 
-    # Layer 1: Regex
-    for pattern in PROMPT_INJECTION_PATTERNS:
+    for pattern in INJECTION_PATTERNS:
 
-        if re.search(pattern, prompt):
+        if re.search(
+            pattern,
+            normalized,
+            re.IGNORECASE,
+        ):
 
             return {
                 "detected": True,
                 "method": "REGEX",
                 "matched": pattern,
-                "score": 100,
+                "confidence": 100.0,
+                "score": 100.0,
             }
 
-    # Layer 2: RapidFuzz
-    detected, match, score = fuzzy_detection(prompt)
+    # =================================================
+    # Layer 2: Fuzzy benchmark detection
+    # =================================================
+
+    detected, match, score = _fuzzy_detection(
+        normalized
+    )
 
     if detected:
 
@@ -204,12 +231,14 @@ def detect_prompt_injection(prompt):
             "detected": True,
             "method": "RAPIDFUZZ",
             "matched": match,
-            "score": score,
+            "confidence": round(score, 2),
+            "score": round(score, 2),
         }
 
     return {
         "detected": False,
         "method": None,
         "matched": None,
-        "score": score,
+        "confidence": round(score, 2),
+        "score": round(score, 2),
     }
